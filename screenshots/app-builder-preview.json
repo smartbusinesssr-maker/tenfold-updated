@@ -1,0 +1,36 @@
+{
+  "url": "http://127.0.0.1:8080/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "Tenfold",
+      "hasCanvas": false,
+      "bodyTextLen": 821,
+      "bodyTextHash": "5c857c44b79712e3e8f73f746dbdc6b18a69058d4b43b40b82f9c6a1d5f47446",
+      "bodyTextPrefix": "Skip to the board Tenfold API key 17 October Saturday. Five wins",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "Tenfold",
+      "hasCanvas": false,
+      "bodyTextLen": 739,
+      "bodyTextHash": "7d189d291aefbbc5c71ca1c023ab66f574c721e78298e65d9a152107bd1162de",
+      "bodyTextPrefix": "Skip to the board Tenfold API key 17 October Saturday. Five wins",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-preview.json"
+}

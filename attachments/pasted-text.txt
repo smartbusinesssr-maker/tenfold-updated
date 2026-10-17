@@ -1,0 +1,3885 @@
+from pathlib import Path
+
+src = Path("/mnt/data/SmartMatchPick_API_Football_Super_Advanced_Prediction_Engine_Spec.md")
+base = src.read_text(encoding="utf-8")
+
+advanced = r"""
+
+---
+
+# 205. ADVANCED INTERPRETATION AND PREDICTION METHODOLOGY
+
+The following section defines **how the fetched data should actually be interpreted**, transformed into predictive signals, combined mathematically, and converted into BTTS, Over/Under, 1X2 and Correct Score probabilities.
+
+The implementation must not simply count historical percentages.
+
+The engine should infer a latent pre-match state:
+
+```text
+ATTACK QUALITY
+DEFENSIVE QUALITY
+HOME/AWAY EFFECT
+RECENT FORM
+SQUAD AVAILABILITY
+TACTICAL/LINEUP STATE
+GOAL ENVIRONMENT
+MARKET STATE
+UNCERTAINTY
+
+Then estimate:
+
+lambda_home
+lambda_away
+
+and derive the four markets from the joint score distribution.
+
+Football score models in the literature commonly use Poisson-family models, while Dixon-Coles specifically adjusts low-score outcomes and later work has explored dynamic/state-space, bivariate and overdispersed models. [8][9]
+
+206. RAW DATA MUST NEVER ENTER THE FINAL MODEL UNTRANSFORMED
+
+The engine should implement:
+
+RAW API DATA
+      ↓
+VALIDATION
+      ↓
+NORMALIZATION
+      ↓
+TEMPORAL FILTER
+      ↓
+CONTEXT FILTER
+      ↓
+RECENCY WEIGHTING
+      ↓
+SHRINKAGE
+      ↓
+OPPONENT ADJUSTMENT
+      ↓
+FEATURE ENGINEERING
+      ↓
+LATENT TEAM STATE
+
+Example:
+
+raw:
+14 shots
+
+do NOT directly interpret:
+"14 shots = strong attack"
+
+Instead:
+
+14 shots
+→ opponent-adjusted shots
+→ home/away-adjusted shots
+→ recent weighted shots
+→ shot-volume percentile
+→ relationship to SOT
+→ relationship to goals
+→ relationship to opponent defensive allowance
+→ uncertainty estimate
+207. FOUR-STEP DATA INTERPRETATION ENGINE
+
+Every feature should pass through four questions.
+
+Question 1 — WHAT HAPPENED?
+
+Example:
+
+Home team averaged 1.8 goals over last 10.
+Question 2 — AGAINST WHOM?
+Opponent defensive strength
+Question 3 — IN WHAT CONTEXT?
+home matches?
+away matches?
+competition?
+recent?
+with current squad?
+Question 4 — HOW RELIABLE IS IT?
+sample size
+variance
+data completeness
+recency
+player continuity
+
+Only after these four questions should the feature enter the prediction model.
+
+208. SIGNAL → EVIDENCE → LATENT STATE
+
+The engine should distinguish three levels.
+
+OBSERVATION
+
+Example:
+
+Home team scored 2 goals.
+EVIDENCE
+
+Example:
+
+Home team's attack has produced above-league scoring
+against above-average defenses.
+LATENT STATE
+
+Example:
+
+Home attack strength = +0.31 log-goal units
+
+This prevents raw statistics from being incorrectly treated as probabilities.
+
+209. ATTACK STRENGTH INTERPRETATION
+
+Do not estimate attack quality from goals alone.
+
+Build a composite attack state:
+
+GOAL OUTPUT
++
+SHOT VOLUME
++
+SHOT ON TARGET
++
+SCORING CONSISTENCY
++
+HOME/AWAY CONTEXT
++
+OPPONENT QUALITY
++
+PLAYER AVAILABILITY
++
+LINEUP STRENGTH
+
+A possible statistical representation:
+
+attack_signal = (
+      w_goals * z(goals_adjusted)
+    + w_shots * z(shots_adjusted)
+    + w_sot * z(sot_adjusted)
+    + w_consistency * z(scoring_consistency)
+)
+
+The weights should be estimated using historical training rather than assumed permanently.
+
+210. DEFENSIVE STRENGTH INTERPRETATION
+
+Defense should not be measured only by:
+
+goals conceded
+
+Use:
+
+goals conceded
+shots conceded
+SOT conceded
+clean sheets
+failed-to-score induced
+home/away defensive context
+opponent-adjusted defensive performance
+goalkeeper
+starting defenders
+availability
+
+Create:
+
+defense_state
+
+that estimates expected opponent scoring suppression.
+
+211. OFFENSIVE EFFICIENCY
+
+Create:
+
+goal_per_shot
+goal_per_SOT
+SOT_per_shot
+
+but shrink these heavily because short-term finishing rates can be extremely noisy.
+
+Recommended:
+
+long-term finishing baseline
++
+recent finishing deviation
+
+rather than allowing the last five matches to dominate.
+
+212. SHOT QUALITY PROXY
+
+When xG is unavailable, approximate attacking quality using multiple observable dimensions:
+
+shots
+SOT
+shots inside box
+SOT share
+goal conversion
+
+Example:
+
+shot_quality_proxy =
+    SOT_share
+    + inside_box_share
+    + conversion_component
+
+This must be explicitly labeled as a proxy, not xG.
+
+213. SHOT-TO-GOAL REGRESSION
+
+Use a hierarchical model for finishing.
+
+Concept:
+
+goals ~ Binomial(shots, finishing_probability)
+
+Then shrink:
+
+team finishing_probability
+
+toward:
+
+league finishing_probability
+
+This protects the model from overreacting to short-term hot/cold finishing.
+
+214. DEFENSIVE SHOT SUPPRESSION
+
+Separate:
+
+goals conceded
+
+from:
+
+shots conceded
+
+A team conceding 1.2 goals from 14 opponent shots is structurally different from:
+
+1.2 goals from 7 shots
+
+The first may have a stronger defense than the goals-only number suggests, although finishing variance is also possible.
+
+Use both.
+
+215. SOT-BASED ATTACK VALIDATION
+
+Use:
+
+shots
+SOT
+goals
+
+as a three-stage chain:
+
+volume
+→
+quality / target
+→
+conversion
+
+Interpret:
+
+high shots + high SOT + low goals
+
+differently from:
+
+low shots + low SOT + high goals
+
+The first may have positive finishing regression potential; the second may contain unsustainably high conversion.
+
+Do not automatically label either as "due to regress."
+
+Validate the effect historically.
+
+216. RECENCY SHOULD BE CONTINUOUS, NOT ONLY "LAST 5"
+
+Build:
+
+EWMA_3
+EWMA_5
+EWMA_10
+EWMA_20
+season_mean
+
+Then allow the model to learn the blend.
+
+Example:
+
+recent_state =
+    beta_3 * ewma_3
+  + beta_5 * ewma_5
+  + beta_10 * ewma_10
+  + beta_20 * ewma_20
+
+subject to:
+
+beta_i >= 0
+sum(beta_i) = 1
+217. STATE-SPACE TEAM FORM
+
+For advanced implementation, model attacking and defensive ability as evolving latent states:
+
+attack_t = attack_(t-1) + process_noise
+defense_t = defense_(t-1) + process_noise
+
+Observed match goals update the latent state.
+
+This is conceptually aligned with dynamic football models that treat team attack/defence strengths as time-varying rather than fixed. [9]
+
+Use:
+
+Kalman-style filtering
+Bayesian state-space inference
+or an equivalent recursive estimator
+
+for leagues with enough history.
+
+218. FORM SHOULD MEAN MORE THAN W-D-L
+
+Do not encode:
+
+W = 3
+D = 1
+L = 0
+
+as the primary form signal.
+
+Instead build:
+
+points_form
+goal_form
+attack_form
+defense_form
+shot_form
+SOT_form
+opponent-adjusted form
+home/away form
+
+W-D-L is a summary outcome, not a full performance model.
+
+219. FORM MOMENTUM
+
+Define changes:
+
+short_term_strength - long_term_strength
+
+Examples:
+
+EWMA_5_goals - season_goals
+EWMA_5_SOT - season_SOT
+EWMA_5_defense - season_defense
+
+This creates:
+
+attack_momentum
+defense_momentum
+overall_momentum
+
+Use shrinkage because momentum is noisy.
+
+220. REGRESSION-TO-MEAN DETECTOR
+
+Create:
+
+observed_rate
+expected_rate
+difference
+sample_size
+
+Flag:
+
+extreme finishing
+extreme clean-sheet run
+extreme BTTS streak
+extreme Over streak
+
+as possible high-variance states.
+
+Do not automatically force regression; reduce certainty until more evidence exists.
+
+221. HOME/AWAY INTERACTION MODEL
+
+Do not simply average:
+
+home team's home scoring
++
+away team's away conceding
+
+Instead model the interaction:
+
+home attack
+× away defense
+× home environment
+
+and:
+
+away attack
+× home defense
+× away environment
+
+In log form:
+
+log(lambda_home) =
+    baseline
+    + home_attack
+    - away_defense
+    + home_advantage
+
+This is more statistically coherent.
+
+222. OPPONENT-ADJUSTED ELO-LIKE STATE
+
+Create one optional strength score:
+
+team_strength
+
+updated after every historical match.
+
+Possible update:
+
+expected_result = logistic(home_strength - away_strength + home_advantage)
+
+error = actual_result - expected_result
+
+new_strength = old_strength + K * error
+
+But do not use Elo alone.
+
+Use it as a latent prior alongside goal-based strength.
+
+223. MULTI-TIMESCALE STRENGTH
+
+Maintain:
+
+long_term_strength
+medium_term_strength
+short_term_strength
+
+Then:
+
+effective_strength =
+    w_long * long
+  + w_medium * medium
+  + w_short * short
+
+Let validation determine:
+
+w_long
+w_medium
+w_short
+224. STRENGTH UNCERTAINTY
+
+Every latent state should have:
+
+estimate
+variance
+
+Example:
+
+attack_strength = 0.28
+attack_uncertainty = 0.07
+
+Then propagate uncertainty into:
+
+lambda_home
+lambda_away
+
+and finally:
+
+prediction confidence
+225. MONTE CARLO PARAMETER UNCERTAINTY
+
+For advanced scoring:
+
+sample model parameters
+sample lambda_home
+sample lambda_away
+generate score matrices
+
+Repeat:
+
+5,000–50,000 simulations
+
+depending on computational budget.
+
+Then derive:
+
+mean probability
+median probability
+credible interval
+
+Example:
+
+Over1.5:
+mean 0.78
+90% interval 0.72–0.83
+
+Do not present the exact interval unless the probabilistic model supports it.
+
+226. WHY PARAMETER UNCERTAINTY MATTERS
+
+Two matches may both have:
+
+P(Over1.5) = 0.78
+
+but:
+
+Match A:
+tight lambda uncertainty
+
+Match B:
+large lambda uncertainty
+
+Match A deserves higher confidence.
+
+This is a major distinction between:
+
+probability
+
+and:
+
+forecast reliability
+227. PLAYER IMPACT AS REPLACEMENT VALUE
+
+For each important player:
+
+player_value
+
+should be measured relative to:
+
+replacement_player_pool
+
+Concept:
+
+player_delta =
+starter_expected_contribution
+-
+replacement_expected_contribution
+
+This is much more useful than using player rating alone.
+
+228. PLAYER ATTACKING CONTRIBUTION
+
+Potential features:
+
+goal share
+assist share
+shot share
+SOT share
+key-pass share
+minutes share
+starting share
+
+Calculate within team.
+
+Then:
+
+attacking_dependency
+
+For example:
+
+team gets 42% of its shots from three players
+
+means losing one can matter substantially.
+
+229. PLAYER DEFENSIVE CONTRIBUTION
+
+Use available defensive actions carefully:
+
+tackles
+interceptions
+duels
+clearance-related fields when available
+
+Do not assume every defensive action equals defensive quality.
+
+Use player historical outcomes and team context.
+
+230. LINEUP CONTINUITY
+
+Calculate:
+
+XI_continuity
+
+from:
+
+number of returning starters
+
+and:
+
+minutes continuity
+
+Possible signal:
+
+high continuity
+
+can mean greater tactical stability.
+
+Validate whether this adds predictive value by league.
+
+231. STARTING XI INTERACTION
+
+Model:
+
+attackers x creators
+
+rather than treating every player independently.
+
+Example:
+
+striker + primary creator
+
+may be more valuable together than the independent sum suggests.
+
+Do not manually invent synergy coefficients.
+
+Learn them only with sufficient data.
+
+232. BENCH DEPTH
+
+Create:
+
+bench_attack_depth
+bench_defense_depth
+
+using available player data.
+
+Useful particularly when:
+
+injuries exist
+
+but should be lower-weight than confirmed starters.
+
+233. GOALKEEPER IMPACT MODEL
+
+Separate:
+
+keeper_baseline
+keeper_recent_form
+keeper_availability
+
+Use:
+
+saves
+goals conceded
+clean sheets
+ratings
+penalty saves
+
+with strong shrinkage.
+
+A goalkeeper should primarily change:
+
+opponent lambda
+
+not the team's own scoring lambda.
+
+234. DEFENSIVE ABSENCE MODEL
+
+Group defensive absences:
+
+goalkeeper
+centre-backs
+full-backs
+defensive midfield
+
+Do not give identical weights.
+
+Model their effect on:
+
+opponent lambda
+
+and potentially:
+
+BTTS probability
+235. ATTACKING ABSENCE MODEL
+
+Group:
+
+striker
+wide attacker
+creator
+midfield scorer
+
+Use:
+
+goal contribution
+shot contribution
+creation contribution
+minutes
+replacement quality
+
+Then adjust:
+
+own lambda
+236. JOINT ABSENCE EFFECT
+
+Multiple absences may interact.
+
+Example:
+
+main striker absent
++
+main creator absent
+
+can cause a larger impact than the two isolated estimates imply.
+
+This should be tested using interaction features.
+
+237. INJURY INFORMATION FRESHNESS
+
+Every injury feature should carry:
+
+first_reported_at
+last_updated_at
+status
+confidence
+
+When status is uncertain:
+
+probable availability
+
+rather than binary:
+
+available / unavailable
+
+where the source supports such interpretation.
+
+238. LINEUP CERTAINTY
+
+Use:
+
+confirmed = 1.0
+probable = configurable probability
+unknown = 0
+
+Do not treat an unconfirmed lineup as confirmed.
+
+239. MATCH IMPORTANCE AS A CONDITIONAL FEATURE
+
+Instead of:
+
+important_match = +0.10
+
+use:
+
+competition/context indicator
+
+and let the historical model estimate the effect.
+
+Potential states:
+
+title race
+relegation
+qualification
+knockout
+group
+ordinary league
+240. REST / FIXTURE CONGESTION
+
+From fixture dates, calculate:
+
+days_since_previous_match
+days_until_next_match
+matches_last_7_days
+matches_last_14_days
+
+These may affect:
+
+rotation
+tempo
+fatigue
+lineup strength
+
+Use cautiously and validate by competition.
+
+241. TRAVEL / VENUE EFFECT
+
+Where reliable geographic information exists, consider:
+
+home/away
+distance
+travel burden
+
+Do not create a fabricated travel-distance signal when accurate coordinates are unavailable.
+
+242. WEATHER
+
+Do not invent weather data from API-Football.
+
+If weather becomes an external source later, treat it as a separate timestamped feature with its own data-quality rules.
+
+This document's core model remains API-Football based.
+
+243. REFEREE
+
+If referee data is present, use only measurable historical referee tendencies with sufficient sample:
+
+cards
+fouls
+penalties
+
+Do not infer goals impact without evidence.
+
+Referee should usually be secondary.
+
+244. GOAL TIMING AS HAZARD INFORMATION
+
+Instead of only:
+
+goals 0-15 rate
+
+consider a discrete hazard representation:
+
+hazard(goal occurs in interval | no earlier goal)
+
+For each team:
+
+h_1
+h_2
+...
+h_6
+
+This can improve temporal scoring simulations.
+
+245. MATCH GOAL HAZARD
+
+Construct:
+
+hazard_total(t)
+
+from:
+
+home scoring hazard
+away scoring hazard
+opponent defensive timing
+
+This is useful for:
+
+Over markets
+BTTS timing
+live model extensions
+
+For pre-match outputs, use it to characterize the shape of the goal distribution rather than only total expected goals.
+
+246. FIRST-GOAL MODEL
+
+Estimate:
+
+P(home scores first)
+P(away scores first)
+P(no goal)
+
+using:
+
+lambda_home
+lambda_away
+
+plus timing adjustments.
+
+This is especially useful for:
+
+BTTS
+Correct Score
+
+and future live prediction.
+
+247. CONDITIONAL GOAL MODEL
+
+Advanced approach:
+
+Before first goal
+    |
+    v
+Who is more likely to score?
+    |
+    v
+How does scoring probability change after a goal?
+
+This allows:
+
+game-state effects
+
+without pretending that all match minutes are statistically identical.
+
+248. GAME-STATE EFFECTS FROM HISTORICAL EVENTS
+
+Events can be used to estimate:
+
+response after conceding
+response after scoring
+late attacking behavior
+
+Do not use them as simple pre-match probabilities.
+
+Instead infer historical tendencies.
+
+249. BIVARIATE SCORE DEPENDENCE
+
+Independence:
+
+P(H=h,A=a)=P(H=h)P(A=a)
+
+may be too restrictive.
+
+Advanced alternatives include:
+
+Dixon-Coles
+bivariate Poisson
+bivariate negative binomial
+Sarmanov-type dependence
+copula-based count models
+
+Recent statistical work explicitly frames Dixon-Coles as a special case of a broader family and explores alternative margins/dependence structures. [8]
+
+250. DIXON-COLES
+
+Use it primarily to correct low scores:
+
+0-0
+0-1
+1-0
+1-1
+
+Do not assume its historical parameter is universal across:
+
+league
+gender
+competition
+season
+
+Fit or validate by dataset.
+
+251. BIVARIATE POISSON
+
+Use a shared component to allow dependence between:
+
+home goals
+away goals
+
+Compare against:
+
+independent Poisson
+Dixon-Coles
+
+using chronological test performance.
+
+252. BIVARIATE NEGATIVE BINOMIAL
+
+Use when:
+
+overdispersion
++
+goal dependence
+
+are both empirically present.
+
+Do not use simply because it is mathematically sophisticated.
+
+253. MIXTURE MODEL
+
+Advanced option:
+
+P(score) =
+w1 * Poisson
++ w2 * Dixon-Coles
++ w3 * NB
++ w4 * empirical
+
+Estimate:
+
+w1..w4
+
+out of sample.
+
+254. REGIME MODEL
+
+A further advanced approach is to classify fixtures into latent regimes:
+
+LOW-GOAL
+BALANCED
+OPEN
+HIGH-GOAL
+
+Features:
+
+lambda_total
+shot environment
+league environment
+team attack/defense
+market
+form
+
+Then use regime-specific distributions.
+
+Do not expose these regimes directly to users unless validated.
+
+255. WHY REGIMES CAN HELP
+
+The same:
+
+lambda_total = 2.4
+
+can arise from:
+
+balanced 1.2 + 1.2
+
+or:
+
+one-sided 1.9 + 0.5
+
+These have materially different:
+
+BTTS
+1X2
+Correct Score
+
+profiles.
+
+Therefore track both:
+
+total expected goals
+
+and:
+
+goal allocation between teams
+256. GOAL ALLOCATION INDEX
+
+Create:
+
+goal_share_home =
+lambda_home / lambda_total
+
+goal_share_away =
+lambda_away / lambda_total
+
+A high:
+
+lambda_total
++
+extreme goal concentration
+
+can produce:
+
+high Over1.5
+but relatively low BTTS
+
+This distinction is critical.
+
+257. BTTS VS OVER 1.5 LOGIC
+
+The model must understand:
+
+Over 1.5
+
+requires:
+
+at least 2 total goals
+
+while:
+
+BTTS
+
+requires:
+
+at least 1 goal from each team
+
+Therefore:
+
+2-0
+
+supports:
+
+Over1.5 = YES
+BTTS = NO
+
+This is why total-goal and goal-allocation states must be modeled separately.
+
+258. FOUR-MARKET LATENT STRUCTURE
+
+Use:
+
+lambda_home
+lambda_away
+dependence
+dispersion
+
+as the central score-state variables.
+
+Then:
+
+1X2
+=
+winner relationship
+
+BTTS
+=
+both marginal scores >= 1
+
+O/U
+=
+sum of scores
+
+Correct Score
+=
+exact joint score
+259. OVER/UNDER LINE GENERALIZATION
+
+Do not build separate unrelated classifiers for:
+
+Over1.5
+Over2.5
+Over3.5
+
+Build:
+
+P(total goals = k)
+
+and derive all lines.
+
+This enforces monotonicity automatically.
+
+260. GOAL-LINE EXPECTATION
+
+For a line:
+
+L = 1.5
+
+compute:
+
+P(total > L)
+
+For:
+
+L = 2.5
+
+same distribution.
+
+This creates:
+
+coherent market curve
+261. TOTAL GOAL SURVIVAL CURVE
+
+Store:
+
+S(k) = P(total goals >= k)
+
+Then:
+
+Over1.5 = S(2)
+Over2.5 = S(3)
+Over3.5 = S(4)
+
+Monitor that:
+
+S(k+1) <= S(k)
+
+always holds.
+
+262. BTTS CURVE
+
+Also calculate:
+
+P(home >= 1)
+P(away >= 1)
+P(BTTS)
+
+This gives:
+
+marginal scoring probabilities
+
+and:
+
+joint scoring probability
+
+A strong BTTS prediction requires both marginals to be healthy.
+
+263. MARKET INFORMATION HIERARCHY
+
+Use market information in this order:
+
+bookmaker consensus
+→ vig-removed probability
+→ price dispersion
+→ movement
+→ market disagreement
+
+Do not use one bookmaker's price as universal truth.
+
+264. MARKET DISPERSION
+
+For a market:
+
+odds across bookmakers
+
+calculate:
+
+median
+IQR
+standard deviation
+
+Large dispersion can signal:
+
+stale price
+low liquidity
+different market state
+
+Treat it as uncertainty information.
+
+265. BOOKMAKER CONSENSUS MODEL
+
+Potential:
+
+consensus = median(fair_probabilities)
+
+Then:
+
+market_uncertainty =
+MAD(fair_probabilities)
+
+High dispersion:
+
+market state less certain
+266. MARKET-IMPLIED TEAM STRENGTH
+
+Optional:
+
+Use 1X2 market probabilities as an external strength signal.
+
+But prevent double counting:
+
+market strength
+
+must remain separate from:
+
+football-only strength
+267. MARKET RESIDUAL MODEL
+
+A very useful architecture:
+
+football_probability
+-
+market_probability
+=
+pricing_residual
+
+Then learn:
+
+when does this residual persist?
+
+This is better than simply adding odds to the main model.
+
+268. MARKET-AWARE ENSEMBLE
+
+Possible structure:
+
+P_final =
+calibrated(
+    model_football,
+    model_market,
+    external_prediction
+)
+
+Use stacking with out-of-fold predictions.
+
+Never train the meta-model on in-sample base-model outputs.
+
+269. OUT-OF-FOLD STACKING
+
+For each training period:
+
+Base models trained on past data
+↓
+predict validation block
+↓
+store predictions
+↓
+meta-model learns from out-of-fold predictions
+
+This prevents meta-model leakage.
+
+270. META-MODEL INPUTS
+
+Example:
+
+dc_home
+dc_draw
+dc_away
+
+poisson_home
+poisson_draw
+poisson_away
+
+nb_home
+nb_draw
+nb_away
+
+market_home
+market_draw
+market_away
+
+api_home
+api_draw
+api_away
+
+data_quality
+lineup_status
+
+Then:
+
+meta-model -> calibrated final probability
+271. MARKET-SPECIFIC STACKING
+
+Use separate meta-models for:
+
+BTTS
+1X2
+Over1.5
+Over2.5
+Correct Score
+
+because the error structure differs.
+
+272. CORRECT SCORE META-MODEL
+
+Do not create 50 independent score classifiers.
+
+Better:
+
+generative score model
++
+residual adjustment
+
+The residual adjustment can learn:
+
+observed score tendencies
+
+while maintaining probability coherence.
+
+273. SCORE PROBABILITY CALIBRATION
+
+Correct Score probabilities are multiclass.
+
+Use:
+
+multiclass log loss
+Brier-type multiclass scores
+ranked probability score
+
+where appropriate.
+
+Calibrate the distribution, not one score at a time independently.
+
+274. TOP-K CORRECT SCORE
+
+Return:
+
+top 1
+top 3
+top 5
+
+and calculate:
+
+cumulative probability
+
+for the top-K set.
+
+Example:
+
+Top 5 scores account for 47%
+
+indicates a concentrated distribution.
+
+275. SCORE ENTROPY
+
+Calculate:
+
+entropy = -sum(p * log(p))
+
+High entropy:
+
+many scorelines plausible
+
+Low entropy:
+
+distribution concentrated
+
+Use this as an uncertainty feature.
+
+276. MARKET-SPECIFIC UNCERTAINTY
+BTTS
+
+Use:
+
+P distribution uncertainty
+1X2
+
+Use:
+
+entropy(Home/Draw/Away)
+O/U
+
+Use:
+
+uncertainty around goal total
+Correct Score
+
+Use:
+
+score entropy
+277. EDGE CONFIDENCE
+
+A selection should not depend only on:
+
+EV
+
+Use:
+
+EV
++
+probability uncertainty
++
+data quality
++
+market dispersion
++
+model agreement
+
+Example:
+
+EV = +7%
+
+with enormous probability uncertainty should not be treated the same as:
+
+EV = +7%
+
+with tight uncertainty.
+
+278. PROBABILISTIC EDGE
+
+Monte Carlo approach:
+
+sample p_model
+sample market state if desired
+calculate EV per simulation
+
+Then:
+
+P(EV > 0)
+
+becomes an additional metric.
+
+Example:
+
+expected EV = +5%
+P(EV > 0) = 86%
+
+This is more informative than the point estimate alone.
+
+279. ROBUST SELECTION
+
+A robust bet can require:
+
+expected EV > threshold
+AND
+P(EV > 0) > threshold
+AND
+data quality > threshold
+
+Keep this logic in the selection layer, not inside the core probability model.
+
+280. PROBABILITY FLOOR / CEILING
+
+Do not artificially force:
+
+minimum 5%
+maximum 95%
+
+without calibration justification.
+
+Use scientifically validated clipping only where numerical stability requires it.
+
+281. CALIBRATION BY LEAGUE
+
+If sample size allows, monitor:
+
+global calibration
+league calibration
+market calibration
+odds-band calibration
+
+But avoid tiny-sample calibrators.
+
+Use hierarchical/shrunk calibration where appropriate.
+
+282. CALIBRATION BY ODDS RANGE
+
+Compare:
+
+model probability
+actual frequency
+
+within market price bands.
+
+This can reveal:
+
+favorite overconfidence
+underdog underconfidence
+low-odds calibration problems
+283. CALIBRATION BY LINEUP STATE
+
+Compare:
+
+pre-lineup
+confirmed-lineup
+
+performance separately.
+
+This tells you whether lineup information actually improves the forecast.
+
+284. CALIBRATION BY DATA QUALITY
+
+Create bins:
+
+90-100
+80-90
+70-80
+...
+
+Check whether lower-quality fixtures are systematically overconfident.
+
+285. INTERPRETING CONFLICTING DATA
+
+This is a key advanced feature.
+
+Example:
+
+Home team recent scoring:
+strong
+
+Home home-season scoring:
+strong
+
+Away defense:
+weak
+
+But:
+starting striker absent
+starting creator absent
+
+Do not:
+
+average all signals
+
+Instead:
+
+baseline attack
+→ player availability adjustment
+→ updated lambda
+
+The squad information changes the latent state.
+
+286. SECOND CONFLICT EXAMPLE
+Over1.5 historical rates:
+very strong
+
+But:
+both teams show low recent shots/SOT
+
+Interpret:
+
+historical goal frequency remains evidence
+but underlying recent attacking process weakened
+
+Use the process variables as a residual update.
+
+Do not discard historical data.
+
+287. THIRD CONFLICT EXAMPLE
+Pure model says Over1.5 = 84%
+market says 70%
+
+This is not automatically:
+
+84% is correct
+
+Investigate:
+
+injuries?
+lineup?
+stale model?
+market information?
+data coverage?
+league anomaly?
+
+Then compare:
+
+pure model
+market model
+combined model
+288. FOURTH CONFLICT EXAMPLE
+High Over1.5
+Low BTTS
+
+This can be coherent if:
+
+lambda_home high
+lambda_away low
+
+Example conceptual state:
+
+2.0 + 0.45
+
+This produces:
+
+high chance of 2+ total goals
+but lower chance both teams score
+
+This is exactly why the model must preserve goal allocation.
+
+289. FIFTH CONFLICT EXAMPLE
+High BTTS
+Moderate Over2.5
+
+This is also coherent:
+
+1-1
+1-2
+2-1
+
+can support BTTS without requiring a very high total-goal environment.
+
+290. SIGNAL PRIORITY RULE
+
+When multiple signals conflict:
+
+1. temporal validity
+2. data quality
+3. structural team strength
+4. home/away context
+5. current lineup/availability
+6. recent form
+7. market
+8. H2H
+
+This is a reasoning order, not a fixed coefficient list.
+
+The statistical model should learn the final weights.
+
+291. FEATURE RELIABILITY WEIGHT
+
+For feature i:
+
+effective_feature_weight =
+model_weight
+*
+reliability_i
+
+Potential reliability components:
+
+sample_size
+freshness
+coverage
+variance
+player continuity
+league quality
+292. SAMPLE-SIZE RELIABILITY
+
+A simple starting transformation:
+
+reliability_n = n / (n + k)
+
+where:
+
+n = effective observations
+k = prior strength
+
+This naturally shrinks small samples.
+
+293. FRESHNESS RELIABILITY
+
+Example:
+
+reliability_time = exp(-decay * age)
+
+Different data types get different decay:
+
+odds = fast
+injuries = fast
+lineups = extremely fast
+standings = slower
+league baseline = slow
+historical H2H = very slow
+294. PLAYER-CONTINUITY RELIABILITY
+
+Historical team performance should receive less weight when:
+
+major players changed
+manager changed
+many starters changed
+
+Use a continuity score:
+
+team_continuity = returning_minutes / prior_minutes
+
+when the necessary player data is available.
+
+295. PRIOR-TO-LIVE TRANSITION
+
+For a new season:
+
+historical prior
+↓
+current season evidence
+↓
+late squad information
+↓
+confirmed lineup
+
+Each stage updates the posterior match state.
+
+This is effectively:
+
+Bayesian information updating
+296. PRE-MATCH BAYESIAN UPDATE
+
+Conceptually:
+
+Prior:
+team strength based on previous history
+
+Likelihood:
+current season matches
+
+Additional evidence:
+injuries
+lineup
+market
+
+Posterior:
+current team strength
+
+This is a better mental model than recalculating disconnected percentages.
+
+297. EXPECTED GOALS POSTERIOR
+
+Rather than only:
+
+lambda_home = 1.72
+
+conceptually maintain:
+
+lambda_home ~ posterior distribution
+
+Then:
+
+E[lambda_home]
+Var(lambda_home)
+
+can feed the score model.
+
+298. PARAMETER UNCERTAINTY VS OUTCOME VARIANCE
+
+Separate:
+
+aleatoric uncertainty
+
+from:
+
+epistemic uncertainty
+Aleatoric
+football itself is noisy
+Epistemic
+model/data is uncertain
+
+The engine should measure both where practical.
+
+299. WHY THIS MATTERS
+
+A fixture can have:
+
+well-estimated lambda
+
+but still be highly unpredictable because:
+
+football outcomes are inherently variable
+
+Therefore:
+
+high probability ≠ guarantee
+300. BTTS FINAL ALGORITHM
+STEP 1
+Estimate home scoring intensity.
+
+STEP 2
+Estimate away scoring intensity.
+
+STEP 3
+Adjust both for:
+    home/away
+    opponent strength
+    recent form
+    lineup
+    injuries
+    goalkeeper
+    goal environment
+
+STEP 4
+Estimate dependence.
+
+STEP 5
+Generate joint score distribution.
+
+STEP 6
+Calculate:
+    P(Home >= 1)
+    P(Away >= 1)
+    P(BTTS)
+
+STEP 7
+Calibrate.
+
+STEP 8
+Estimate probability uncertainty.
+
+STEP 9
+Compare with BTTS market.
+
+STEP 10
+Calculate EV.
+
+STEP 11
+Apply data-quality/value gate.
+301. ADVANCED BTTS FEATURE SET
+home_lambda
+away_lambda
+
+prob_home_score
+prob_away_score
+
+home_attack_state
+away_attack_state
+
+home_defense_state
+away_defense_state
+
+home_home_attack
+away_away_attack
+
+home_failed_score
+away_failed_score
+
+home_clean_sheet
+away_clean_sheet
+
+home_SOT
+away_SOT
+
+opponent_adjusted_attack
+opponent_adjusted_defense
+
+injury_attack_delta
+injury_defense_delta
+keeper_delta
+
+lineup_attack_delta
+lineup_defense_delta
+
+goal_timing_state
+
+league_BTTs
+market_BTTs
+
+API_prediction
+302. BTTS INTERPRETATION RULES
+Strong BTTS pattern
+both lambdas materially above zero
+both scoring probabilities healthy
+both defenses permit scoring
+low failed-to-score risk
+balanced goal allocation
+Weak BTTS pattern
+high total lambda
+but one lambda dominates
+
+This is often:
+
+Over-friendly
+BTTS-unfriendly
+303. OVER 1.5 FINAL ALGORITHM
+STEP 1
+Estimate lambda_home.
+
+STEP 2
+Estimate lambda_away.
+
+STEP 3
+lambda_total = lambda_home + lambda_away.
+
+STEP 4
+Estimate total-goal dispersion.
+
+STEP 5
+Generate total-goal distribution.
+
+STEP 6
+Calculate P(Total >= 2).
+
+STEP 7
+Adjust with empirically validated residual features:
+    goal environment
+    shots/SOT
+    failed-to-score
+    home/away
+    lineup
+    injuries
+    goalkeeper
+    timing
+
+STEP 8
+Calibrate.
+
+STEP 9
+Compare with market.
+
+STEP 10
+Calculate EV.
+
+STEP 11
+Apply selection gate.
+304. OVER 1.5 INTERPRETATION MATRIX
+HIGH lambda_total + balanced allocation
+    -> strong Over + potentially strong BTTS
+
+HIGH lambda_total + one-sided allocation
+    -> strong Over + weaker BTTS
+
+LOW lambda_total + balanced
+    -> weak Over + possibly moderate BTTS
+
+LOW lambda_total + one-sided
+    -> weak Over + weak BTTS
+
+This distinction should be visible inside the model diagnostics.
+
+305. 1X2 FINAL ALGORITHM
+STEP 1
+Estimate team strengths.
+
+STEP 2
+Estimate lambda_home and lambda_away.
+
+STEP 3
+Generate joint score distribution.
+
+STEP 4
+Aggregate:
+    Home
+    Draw
+    Away
+
+STEP 5
+Apply calibrated residual model.
+
+STEP 6
+Add market benchmark.
+
+STEP 7
+Calculate probability uncertainty.
+
+STEP 8
+Check draw-specific risk.
+
+STEP 9
+Calibrate.
+
+STEP 10
+Return final distribution.
+306. 1X2 WIN INTERPRETATION
+
+A strong home-win forecast should ideally have:
+
+positive home attack state
++
+positive home defensive state
++
+home advantage
++
+supporting current form
++
+lineup availability
++
+favorable score distribution
+
+Do not interpret:
+
+league position = win
+
+as sufficient evidence.
+
+307. DRAW INTERPRETATION
+
+Draw probability should rise when:
+
+lambda_home ≈ lambda_away
+
+and:
+
+lambda_total is modest
+
+plus:
+
+team strengths similar
+
+The score distribution naturally produces:
+
+0-0
+1-1
+2-2
+
+and related draw outcomes.
+
+308. CORRECT SCORE FINAL ALGORITHM
+STEP 1
+Estimate posterior lambda_home.
+
+STEP 2
+Estimate posterior lambda_away.
+
+STEP 3
+Estimate dependence.
+
+STEP 4
+Choose validated distribution family.
+
+STEP 5
+Generate score matrix.
+
+STEP 6
+Apply low-score correction.
+
+STEP 7
+Apply player/lineup effects.
+
+STEP 8
+Normalize matrix.
+
+STEP 9
+Rank scorelines.
+
+STEP 10
+Calculate fair prices.
+
+STEP 11
+Compare to correct-score market.
+
+STEP 12
+Calibrate / validate distribution.
+309. CORRECT SCORE INTERPRETATION
+
+The most probable score should make sense relative to:
+
+lambda_home
+lambda_away
+
+Example conceptual interpretation:
+
+lambda_home > lambda_away
+
+should generally shift mass toward:
+
+1-0
+2-0
+2-1
+1-1
+
+rather than:
+
+0-2
+
+unless a dependence/residual model provides genuine evidence.
+
+310. SCORE DISTRIBUTION CONCENTRATION
+
+Calculate:
+
+max_probability
+top_3_sum
+top_5_sum
+entropy
+
+High:
+
+top_1
+
+does not automatically mean high confidence.
+
+It can simply mean:
+
+1-0
+
+is more likely than every other individual scoreline even though it remains low probability.
+
+311. CORRECT SCORE VALUE MODEL
+
+For score s:
+
+fair_odds_s = 1 / P_s
+
+EV_s = P_s * market_odds_s - 1
+
+Rank separately by:
+
+probability
+
+and:
+
+EV
+312. MARKET SELECTION EXAMPLE
+
+Suppose:
+
+model P = 0.12
+market odds = 10.0
+
+EV = 0.12*10 - 1
+   = +0.20
+
+The score has:
+
+12%
+
+probability but:
+
++20% EV
+
+This is a value distinction.
+
+Do not call it the "safest" score.
+
+313. FULL PROBABILITY COHERENCE TEST
+
+Given score matrix:
+
+P(h,a)
+
+calculate:
+
+P_home_win
+P_draw
+P_away_win
+P_BTTS
+P_Over15
+P_Over25
+...
+
+Then independently recompute those same quantities from the published output.
+
+They must match.
+
+314. MODEL OUTPUT SHOULD CONTAIN RAW + CALIBRATED
+
+Example:
+
+{
+  "over15_raw": 0.812,
+  "over15_calibrated": 0.786,
+  "over15_uncertainty": 0.041
+}
+
+This allows monitoring whether calibration is materially changing the model.
+
+315. CALIBRATION PIPELINE
+raw generative probability
+        ↓
+ensemble probability
+        ↓
+calibration model
+        ↓
+final probability
+        ↓
+probability sanity checks
+316. DO NOT CALIBRATE THE WRONG OBJECT
+
+For:
+
+1X2
+
+calibrate:
+
+multiclass probability vector
+
+For:
+
+BTTS
+
+binary calibrator.
+
+For:
+
+Over/Under
+
+binary per line OR preferably calibrate the total-goal distribution coherently.
+
+For:
+
+Correct Score
+
+multiclass/distribution calibration.
+
+317. TOTAL-DISTRIBUTION CALIBRATION
+
+Advanced:
+
+predicted P(total=k)
+
+should be calibrated as a distribution.
+
+Then derive:
+
+Over1.5
+Over2.5
+...
+
+This is preferable to independently calibrating each line if enough data exists.
+
+318. MONOTONIC CALIBRATION
+
+After calibration verify:
+
+P(Over1.5)
+>=
+P(Over2.5)
+>=
+P(Over3.5)
+
+If independent calibrators violate monotonicity, use a constrained calibration approach or derive lines from a calibrated total distribution.
+
+319. FINAL MARKET PROBABILITY OBJECT
+
+Recommended:
+
+{
+  "1x2": {
+    "home": 0.54,
+    "draw": 0.27,
+    "away": 0.19
+  },
+  "btts": {
+    "yes": 0.57,
+    "no": 0.43
+  },
+  "goals": {
+    "over_1_5": 0.81,
+    "under_1_5": 0.19,
+    "over_2_5": 0.59,
+    "under_2_5": 0.41
+  },
+  "correct_score": [
+    {"score": "1-0", "p": 0.14},
+    {"score": "1-1", "p": 0.12},
+    {"score": "2-0", "p": 0.11}
+  ]
+}
+
+Values are schema examples only.
+
+320. PREDICTION DECISION OBJECT
+
+Separate:
+
+probability
+confidence
+value
+selection
+
+Example:
+
+{
+  "probability": 0.81,
+  "confidence": 0.88,
+  "market_probability": 0.75,
+  "edge": 0.06,
+  "ev": 0.08,
+  "selection": true
+}
+
+Values are illustrative.
+
+321. DATA QUALITY IMPACT ON PUBLISHING
+
+Do not mutate:
+
+probability
+
+just because data quality is low.
+
+Instead:
+
+probability = model estimate
+confidence = reliability estimate
+publication = eligibility decision
+
+This preserves statistical meaning.
+
+322. QUALITY-ADJUSTED DISPLAY
+
+Internally:
+
+P = 81%
+
+but:
+
+data_quality = 62
+
+means:
+
+prediction remains 81%
+but confidence/display grade should be reduced
+
+Do not secretly turn:
+
+81%
+
+into:
+
+73%
+
+unless a formal statistical correction model does that.
+
+323. MODEL AGREEMENT SCORE
+
+Compute:
+
+agreement =
+1 - normalized dispersion(
+    base models
+)
+
+Possible inputs:
+
+DC
+Poisson
+NB
+state-space
+market
+
+Use only genuinely distinct models.
+
+324. OUTLIER MODEL DETECTION
+
+If one model says:
+
+92%
+
+and all others say:
+
+65-70%
+
+do not simply average.
+
+Flag:
+
+model_outlier = true
+
+Investigate:
+
+bad feature
+different data
+parameter instability
+model failure
+325. ENSEMBLE ROBUSTNESS
+
+Compute:
+
+full ensemble
+leave-one-model-out ensemble
+
+If prediction changes materially after removing one model:
+
+ensemble fragility = high
+
+This should lower confidence.
+
+326. JACKKNIFE FEATURE ROBUSTNESS
+
+Remove feature groups one at a time:
+
+injuries
+lineups
+market
+H2H
+shots
+events
+
+If probability changes dramatically:
+
+feature dependency = high
+
+Monitor.
+
+327. ADVANCED PREDICTION PIPELINE
+API
+ ↓
+RAW ARCHIVE
+ ↓
+SCHEMA VALIDATOR
+ ↓
+TEMPORAL LEAKAGE FILTER
+ ↓
+NORMALIZER
+ ↓
+HISTORICAL STORE
+ ↓
+FEATURE STORE
+ ↓
+RECENCY + SHRINKAGE
+ ↓
+OPPONENT ADJUSTMENT
+ ↓
+TEAM STATE FILTER
+ ↓
+PLAYER/LINEUP STATE
+ ↓
+GOALKEEPER STATE
+ ↓
+MARKET STATE
+ ↓
+EXPECTED GOALS POSTERIOR
+ ↓
+JOINT SCORE DISTRIBUTION
+ ↓
+ENSEMBLE / RESIDUAL MODELS
+ ↓
+CALIBRATION
+ ↓
+UNCERTAINTY
+ ↓
+VALUE ENGINE
+ ↓
+QUALITY GATE
+ ↓
+PUBLISH
+328. SMARTMATCHPICK "ENGINE OF ENGINES"
+
+The system should be thought of as:
+
+DATA ENGINE
++
+FEATURE ENGINE
++
+TEAM STATE ENGINE
++
+PLAYER STATE ENGINE
++
+GOAL ENGINE
++
+SCORE ENGINE
++
+MARKET ENGINE
++
+CALIBRATION ENGINE
++
+VALUE ENGINE
++
+QUALITY ENGINE
+
+The current BTTS, 1X2, O/U and Correct Score outputs sit on top of this architecture.
+
+329. API CALL → FEATURE MAP
+/fixtures
+
+Produces:
+
+schedule
+opponent
+home/away
+result history
+rest
+competition context
+/teams/statistics
+
+Produces:
+
+season aggregate prior
+/standings
+
+Produces:
+
+strength context
+/fixtures/statistics
+
+Produces:
+
+performance process
+/fixtures/events
+
+Produces:
+
+goal timing
+cards
+substitution state
+/fixtures/players
+
+Produces:
+
+player performance history
+/injuries
+
+Produces:
+
+availability state
+/lineups
+
+Produces:
+
+actual starting state
+/odds
+
+Produces:
+
+market state
+/predictions
+
+Produces:
+
+external model state
+330. HOW TO INTERPRET API-FOOTBALL /PREDICTIONS
+
+The endpoint should contribute:
+
+external probability
+external predicted goals
+external winner
+external under/over signal
+
+but your system should compare it with:
+
+own expected goals
+own score matrix
+market
+
+API-Football itself describes the endpoint as its own algorithmic forecast based on historical/form/H2H-style inputs. [1][10]
+
+Therefore:
+
+API prediction ≠ ground truth
+331. API-PREDICTION DISAGREEMENT DIAGNOSTIC
+
+Store:
+
+own_home
+api_home
+difference
+
+own_draw
+api_draw
+difference
+
+own_away
+api_away
+difference
+
+For goal markets:
+
+own_lambda_total
+api_estimated_total
+difference
+
+Large disagreement is a diagnostic feature.
+
+332. MODEL CONSENSUS VS MARKET CONSENSUS
+
+You now have three sources:
+
+SMARTMATCHPICK MODEL
+API-FOOTBALL MODEL
+BOOKMAKER MARKET
+
+Do not simply average:
+
+one-third each
+
+Instead treat them as:
+
+three evidence channels
+
+and learn their incremental value.
+
+333. INFORMATION-NOVELTY SCORE
+
+For new data:
+
+new_feature_value
+
+measure:
+
+how much it changes the posterior
+
+Example:
+
+lineup loaded
+lambda_home:
+1.73 -> 1.49
+
+This was highly informative.
+
+Another lineup:
+
+1.73 -> 1.71
+
+was low-information.
+
+Use this to optimize API calls.
+
+334. ADAPTIVE API PRIORITIZATION
+
+For candidate fixture:
+
+expected_information_gain =
+expected_change_in_prediction
+/
+API_cost
+
+Call the endpoint with highest expected value under quota.
+
+This is an advanced way to optimize your existing API budget.
+
+335. EXAMPLE INFORMATION-GAIN LOGIC
+
+If:
+
+prediction is already 90%
+
+and:
+
+lineup historically changes probability by only 0.5%
+
+lineup polling may be low priority.
+
+If:
+
+prediction is 68%
+
+and:
+
+key-player lineup status could change lambda by 15%
+
+lineup polling becomes high priority.
+
+336. DATA ACQUISITION SHOULD BE MARKET-AWARE
+
+Different market:
+
+Correct Score
+
+may justify:
+
+player and lineup enrichment
+
+more strongly than a simple:
+
+Over1.5
+
+because exact-score probabilities are more sensitive to score allocation.
+
+337. MARKET-SPECIFIC API BUDGET
+
+Example conceptual allocation:
+
+BTTS:
+goals + defense + lineup + injury
+
+Over1.5:
+goals + shots/SOT + timing + lineup
+
+1X2:
+strength + lineup + keeper + market
+
+Correct Score:
+full deep model + lineup + keeper + score distribution
+
+Tune through endpoint ablation tests.
+
+338. NO "ONE SIZE FITS ALL" FEATURE WEIGHTS
+
+The optimal use of:
+
+H2H
+shots
+injuries
+market
+
+will differ by market.
+
+Train or validate separate feature sets.
+
+339. CROSS-MARKET FEATURE SHARING
+
+Share:
+
+team state
+player state
+lambda state
+
+but allow market-specific residual models.
+
+This gives:
+
+shared statistical coherence
++
+market-specific specialization
+340. RESIDUAL LEARNING
+
+After the generative score model:
+
+observed outcome
+-
+base_model_probability
+
+train a residual model on:
+
+shots
+SOT
+lineup
+market
+form
+etc.
+
+Then:
+
+final = base + calibrated_residual
+
+with probability constraints.
+
+This is often safer than replacing the underlying score model with a black-box classifier.
+
+341. TREE MODEL USE
+
+A gradient boosting model can be useful for:
+
+nonlinear interactions
+
+such as:
+
+injury impact depends on team depth
+form matters more when lineup continuity is high
+market disagreement matters differently at different odds
+
+Potential algorithms:
+
+LightGBM
+XGBoost
+CatBoost
+
+Use only with chronological validation.
+
+342. BLACK-BOX MODEL RESTRICTION
+
+Do not allow a black-box model to directly output arbitrary probabilities without:
+
+calibration
+probability constraints
+temporal validation
+interpretability
+343. HYBRID MODEL RECOMMENDATION
+
+Best architecture:
+
+Generative football model
+        +
+ML residual model
+        +
+Market model
+        +
+Calibration
+
+not:
+
+raw API data -> neural network -> "80%"
+344. FEATURE INTERACTIONS TO TEST
+
+Potential:
+
+attack × opposing defense
+
+home attack × away defense
+
+striker absence × creator absence
+
+goalkeeper absence × shots conceded
+
+form × opponent strength
+
+market disagreement × model uncertainty
+
+lambda_total × goal allocation
+
+league environment × team strength
+
+Use regularization to prevent overfitting.
+
+345. INTERACTION DISCOVERY
+
+Rather than hand-writing all interactions:
+
+tree-based residual model
+
+can discover nonlinear relationships.
+
+Then validate important interactions and optionally incorporate them into the structured model.
+
+346. SHAP / FEATURE IMPORTANCE
+
+Use feature attribution primarily for:
+
+debugging
+model monitoring
+admin explanation
+
+Do not treat feature importance as causal effect.
+
+347. CAUSAL WARNING
+
+If:
+
+injured team has lower goals
+
+that does not automatically prove:
+
+injury caused exactly X reduction
+
+Use predictive modeling rather than causal language.
+
+348. MODEL EXPLANATION FORMAT
+
+For a published Over1.5 prediction:
+
+Probability: 81%
+
+Main positive evidence:
+- high combined goal environment
+- strong home scoring state
+- weak away defensive state
+- low failed-to-score risk
+
+Main negative evidence:
+- recent SOT decline
+
+Late adjustments:
+- full attacking XI confirmed
+
+Market:
+- model price better than consensus
+
+Every item must come directly from feature records.
+
+349. NEGATIVE-EVIDENCE ENGINE
+
+Do not only collect reasons supporting the prediction.
+
+Also calculate:
+
+contradicting_signals
+
+Example:
+
+Positive:
+home scoring 1.9
+
+Negative:
+opponent away defense strong
+
+Then model:
+
+net evidence
+
+This makes predictions more robust.
+
+350. EVIDENCE BALANCE
+
+For each market:
+
+positive_evidence_score
+negative_evidence_score
+evidence_balance
+
+Use this as a diagnostic.
+
+Not a replacement for probability.
+
+351. PREDICTION STABILITY
+
+Generate prediction under perturbations:
+
+remove H2H
+remove market
+remove one noisy feature
+slightly alter recent weights
+
+Then calculate:
+
+prediction_stability
+
+If:
+
+81% -> 80% -> 82%
+
+stable.
+
+If:
+
+81% -> 64% -> 89%
+
+fragile.
+
+352. BOOTSTRAP STABILITY
+
+Bootstrap historical matches and refit simplified models.
+
+Measure:
+
+probability variation
+
+This gives an empirical stability diagnostic.
+
+353. CROSS-SEASON STABILITY
+
+Test whether model behavior remains reasonable across:
+
+multiple seasons
+
+Do not optimize solely for one season.
+
+354. LEAGUE TRANSFER TEST
+
+Train on:
+
+League A
+
+and test across:
+
+League B
+
+only to assess generalization.
+
+Do not assume transferability.
+
+355. LEAGUE-SPECIFIC CALIBRATORS
+
+Use:
+
+global calibrator
+
+then optionally:
+
+league-specific correction
+
+when sample size justifies it.
+
+356. DATA COMPLETENESS AS A MODEL FEATURE
+
+Rather than simply rejecting all missing data, include:
+
+missing_statistics_count
+missing_player_count
+missing_odds_count
+missing_event_fields
+
+This can let the calibration layer learn whether partial-data fixtures behave differently.
+
+357. DATA AVAILABILITY SELECTION BIAS
+
+Important:
+
+If:
+
+rich leagues
+
+have more data than:
+
+small leagues
+
+your training set can become biased toward high-coverage competitions.
+
+Monitor performance by:
+
+coverage bucket
+358. SAMPLE WEIGHTING
+
+Consider weighting training examples by:
+
+data reliability
+
+but do not allow weights to erase entire classes of competitions.
+
+359. QUOTA-AWARE HISTORICAL ENRICHMENT
+
+Historical enrichment should be:
+
+one-time
+
+then reused.
+
+Do not repeatedly spend API calls rebuilding:
+
+2024 fixtures
+
+every prediction cycle.
+
+360. GOLDEN DATASET
+
+Create a fixed historical dataset:
+
+GOLDEN_DATASET
+
+used for:
+
+regression tests
+model comparisons
+schema changes
+API changes
+calibration changes
+
+If a code update materially changes predictions on known fixtures, investigate before deployment.
+
+361. MODEL REGRESSION TEST
+
+After code changes:
+
+old model
+vs
+new model
+
+on the same frozen dataset.
+
+Track:
+
+probability deltas
+ranking changes
+selection changes
+362. PRODUCTION SHADOW MODE
+
+Before replacing production model:
+
+OLD ENGINE
+NEW ENGINE
+
+run simultaneously.
+
+Compare:
+
+predictions
+data usage
+errors
+latency
+ROI
+calibration
+
+without changing user-facing selections initially.
+
+363. CHAMPION / CHALLENGER
+
+Maintain:
+
+champion_model
+challenger_model
+
+Promote challenger only if:
+
+out-of-sample evidence
+
+shows improvement.
+
+364. MODEL DEPLOYMENT GATE
+
+Require:
+
+no leakage
+acceptable calibration
+stable probability distributions
+acceptable API health
+no schema anomalies
+
+before production deployment.
+
+365. ADVANCED PREDICTION FLOW — FINAL
+1. Identify fixture
+2. Check competition coverage
+3. Load all valid historical data
+4. Build as-of snapshot
+5. Separate overall/home/away history
+6. Apply recency weights
+7. Apply shrinkage
+8. Adjust for opponent strength
+9. Estimate latent attack
+10. Estimate latent defense
+11. Estimate home advantage
+12. Estimate player state
+13. Estimate goalkeeper state
+14. Incorporate injuries
+15. Incorporate lineup
+16. Add goal timing
+17. Add league environment
+18. Generate football-only lambdas
+19. Generate market state
+20. Generate API-Football benchmark
+21. Run Poisson/DC/BP/NB candidates
+22. Compare candidate model quality
+23. Build joint score distribution
+24. Apply residual model
+25. Calibrate
+26. Estimate uncertainty
+27. Derive BTTS
+28. Derive 1X2
+29. Derive O/U
+30. Derive Correct Score
+31. Run coherence tests
+32. Run stability tests
+33. Compare market
+34. Calculate fair price
+35. Calculate EV
+36. Calculate probability of positive EV
+37. Apply data-quality gate
+38. Apply selection rules
+39. Publish
+40. Persist complete audit snapshot
+366. ADVANCED BTTS PREDICTION FORMULA
+
+Conceptually:
+
+BTTS =
+f(
+    lambda_home,
+    lambda_away,
+    dependence,
+    home_attack,
+    away_attack,
+    home_defense,
+    away_defense,
+    scoring_process,
+    conceding_process,
+    player_state,
+    goalkeeper_state,
+    lineup_state,
+    timing_state,
+    league_environment,
+    market_state
+)
+
+It should NOT be:
+
+average(
+    home BTTS rate,
+    away BTTS rate
+)
+367. ADVANCED OVER 1.5 FORMULA
+Over15 =
+f(
+    total_goal_distribution,
+    lambda_home,
+    lambda_away,
+    dispersion,
+    home/away context,
+    shots/SOT process,
+    failed-to-score,
+    clean-sheet context,
+    lineup,
+    injuries,
+    goalkeeper,
+    league environment,
+    market
+)
+368. ADVANCED 1X2 FORMULA
+1X2 =
+f(
+    joint_score_distribution,
+    home_strength,
+    away_strength,
+    home_advantage,
+    lineup,
+    injuries,
+    goalkeeper,
+    form,
+    standings,
+    market
+)
+369. ADVANCED CORRECT SCORE FORMULA
+CorrectScore =
+f(
+    lambda_home,
+    lambda_away,
+    dependence,
+    dispersion,
+    low_score_correction,
+    lineup,
+    injuries,
+    goalkeeper,
+    league_environment,
+    player_state,
+    market
+)
+370. DO NOT USE FIXED MANUAL WEIGHTS AS THE FINAL SYSTEM
+
+Avoid production formulas such as:
+
+goals = 30%
+shots = 20%
+H2H = 10%
+odds = 20%
+injuries = 10%
+form = 10%
+
+unless those weights have been estimated and validated.
+
+Use these as:
+
+feature groups
+
+and let training estimate coefficients/weights.
+
+371. REGULARIZATION
+
+For statistical models use:
+
+L1
+L2
+elastic net
+hierarchical priors
+
+where appropriate.
+
+This reduces:
+
+feature explosion
+small-sample overfitting
+unstable coefficients
+372. TEMPORAL REGULARIZATION
+
+Recent data should influence the model more when:
+
+team state is changing
+
+but less when:
+
+sample is tiny
+
+This can be represented with dynamic/state-space models rather than arbitrary last-N rules.
+
+373. ROBUSTNESS TO OUTLIERS
+
+Use:
+
+winsorization
+robust z-scores
+Huber loss
+heavy-tailed distributions
+
+where justified.
+
+Do not remove legitimate football extremes automatically.
+
+374. EXTREME MATCHES
+
+Examples:
+
+7-0
+8-2
+0-6
+
+must remain in historical data unless:
+
+data corruption
+
+is confirmed.
+
+Consider robust influence weighting rather than deletion.
+
+375. MATCH-LEVEL RANDOM EFFECTS
+
+For training:
+
+league random effect
+season random effect
+team random effect
+
+can capture structural differences.
+
+Hierarchical Bayesian or mixed-effects models are suitable options.
+
+376. LEAGUE RANDOM EFFECT
+
+Concept:
+
+log(lambda) =
+global
++ league_effect
++ team_attack
+- opponent_defense
++ context
+
+This helps share information across competitions while allowing league-specific environments.
+
+377. SEASON RANDOM EFFECT
+
+Allow:
+
+season_tendency
+
+to capture:
+
+scoring inflation/deflation
+378. TEAM RANDOM EFFECT
+
+Use partial pooling so new teams do not have wildly unstable estimates.
+
+379. PROMOTED TEAM PRIOR
+
+For promoted teams:
+
+prior based on previous-league strength
++
+current-league evidence
++
+squad state
+
+with uncertainty appropriately high.
+
+380. CUP MATCH MODEL
+
+Do not automatically apply league model to cups.
+
+Features should include:
+
+competition type
+rotation
+fixture importance
+
+and model behavior should be validated separately.
+
+381. KNOCKOUT MATCH MODEL
+
+Cup knockout matches may have:
+
+different incentives
+
+and:
+
+extra time / penalties
+
+For pre-match 90-minute markets, define targets carefully.
+
+Correct Score and 1X2 must explicitly distinguish:
+
+90-minute result
+extra time
+penalties
+382. MARKET TARGET DEFINITIONS
+
+Before training, specify exactly:
+
+1X2 = 90-minute result?
+O/U = 90-minute goals?
+BTTS = regulation time?
+Correct Score = 90-minute score?
+
+Never mix market settlement rules.
+
+383. TRAINING TARGET CONTRACT
+
+Every dataset row should define:
+
+target_type
+settlement_rule
+regulation_or_extra_time
+void_policy
+384. ODDS TARGET ALIGNMENT
+
+Only compare model output against the market matching:
+
+same settlement rules
+same goal line
+same match period
+385. EXAMPLE OF AVOIDING WRONG COMPARISON
+
+Do not compare:
+
+90-minute model probability
+
+against:
+
+including-extra-time market
+
+This creates false edge.
+
+386. MARKET SELECTION RULE
+
+Before computing EV:
+
+market_definition == model_definition
+
+must be true.
+
+387. PREDICTION CACHE
+
+Cache:
+
+feature snapshot
+model output
+calibration output
+
+separately.
+
+If odds change:
+
+do not recompute football strength unless necessary
+
+instead recompute:
+
+market/value layer
+388. PARTIAL RECOMPUTATION
+
+This is important for efficiency.
+
+If only:
+
+odds changed
+
+update:
+
+market probability
+EV
+selection
+
+If:
+
+lineup changed
+
+update:
+
+player state
+lambda
+score distribution
+all markets
+389. DEPENDENCY GRAPH
+
+Build:
+
+fixtures
+   ↓
+historical team state
+   ↓
+lambda
+
+injury ───────┐
+lineup ───────┼──> lambda
+keeper ───────┘
+
+lambda
+   ↓
+score matrix
+   ↓
+1X2 / BTTS / O/U / Correct Score
+
+odds
+   ↓
+value layer
+
+This reduces unnecessary computation.
+
+390. EVENT-DRIVEN UPDATES
+
+Instead of scheduled full rebuilds only:
+
+LINEUP_UPDATED
+INJURY_UPDATED
+ODDS_UPDATED
+FIXTURE_STATUS_UPDATED
+
+trigger targeted recomputation.
+
+391. PREDICTION DIFFING
+
+When prediction updates:
+
+old probability
+new probability
+delta
+reason
+
+Example:
+
+Over1.5:
+78% -> 74%
+
+Reason:
+starting striker ruled out
+lambda_home:
+1.72 -> 1.49
+392. USER-FACING PREDICTION HISTORY
+
+Store every version:
+
+v1 baseline
+v2 injury-adjusted
+v3 lineup-adjusted
+v4 final
+
+Only the final should normally be published, but all versions remain auditable.
+
+393. FINAL SELECTION SNAPSHOT
+
+When selected:
+
+selection_probability
+best_odds
+bookmaker
+fair_odds
+EV
+timestamp
+
+must be frozen.
+
+394. NO RETROACTIVE ODDS CHANGES
+
+If odds later move:
+
+historical selection price remains unchanged
+
+for settlement and performance analysis.
+
+395. RESULT FEEDBACK
+
+After final score:
+
+prediction
+vs
+actual
+
+feed into:
+
+market-specific performance
+calibration
+drift
+feature diagnostics
+396. ADVANCED ERROR TAXONOMY
+
+Classify errors:
+
+A — Team strength misestimated
+B — Home/away effect misestimated
+C — Player availability missed
+D — Lineup shock
+E — Goalkeeper shock
+F — Tactical regime
+G — Finishing variance
+H — Goal distribution variance
+I — Market mispricing assumption
+J — Data quality error
+K — Calibration error
+L — API/source error
+
+This will make future model improvement much more targeted.
+
+397. PREDICTION REVIEW AFTER LOSS
+
+The engine should answer:
+
+Was the probability badly calibrated?
+Was the feature snapshot wrong?
+Was there a missing injury?
+Was the lineup different?
+Did the team simply underperform?
+Was the market more informative?
+Was this normal model variance?
+398. DO NOT TRAIN ON POST-HOC EXPLANATIONS
+
+The post-match explanation is diagnostic.
+
+Do not allow:
+
+actual outcome
+
+to leak into the next pre-match feature snapshot.
+
+399. DATA LINEAGE GRAPH
+
+Every final probability should be traceable:
+
+P(Over1.5)
+ ↓
+score distribution
+ ↓
+lambda_home
+ ↓
+lambda_away
+ ↓
+team strength
+ ↓
+historical matches
+ ↓
+API-Football raw responses
+
+This is the highest standard of reproducibility for the system.
+
+400. FINAL "HOW THE ENGINE SHOULD THINK"
+
+The engine should conceptually reason:
+
+WHAT ARE THESE TEAMS?
+
+        ↓
+
+HOW STRONG ARE THEIR ATTACKS?
+
+        ↓
+
+HOW STRONG ARE THEIR DEFENSES?
+
+        ↓
+
+HOW DOES HOME/AWAY CHANGE THIS?
+
+        ↓
+
+HOW GOOD WERE THEIR RECENT PERFORMANCES
+AFTER ADJUSTING FOR OPPONENT QUALITY?
+
+        ↓
+
+WHO IS ACTUALLY AVAILABLE?
+
+        ↓
+
+WHO IS ACTUALLY STARTING?
+
+        ↓
+
+HOW GOOD ARE THE GOALKEEPERS?
+
+        ↓
+
+WHAT IS THE CURRENT LEAGUE GOAL ENVIRONMENT?
+
+        ↓
+
+HOW MANY GOALS SHOULD EACH TEAM SCORE?
+
+        ↓
+
+HOW UNCERTAIN ARE THOSE EXPECTATIONS?
+
+        ↓
+
+WHAT IS THE FULL JOINT SCORE DISTRIBUTION?
+
+        ↓
+
+WHAT DOES THAT DISTRIBUTION IMPLY FOR:
+1X2
+BTTS
+OVER/UNDER
+CORRECT SCORE?
+
+        ↓
+
+HOW DOES THE MARKET PRICE THOSE EVENTS?
+
+        ↓
+
+IS THERE A REAL, CALIBRATED EDGE?
+
+        ↓
+
+IS THE DATA QUALITY HIGH ENOUGH TO PUBLISH?
+
+        ↓
+
+PUBLISH OR REJECT.
+401. THE MOST IMPORTANT CHANGE TO MAKE TO THE EXISTING ENGINE
+
+The current engine should not primarily ask:
+
+"How many historical matches went Over 1.5?"
+
+It should ask:
+
+"What is the current posterior distribution of home and away scoring,
+given opponent-adjusted history, home/away context, player availability,
+lineup state, goalkeeper state, competition environment, and market
+information?"
+
+Then:
+
+Over 1.5
+
+is a mathematical consequence of that distribution.
+
+Likewise:
+
+BTTS
+1X2
+Correct Score
+
+are consequences of the same match state.
+
+402. FINAL SMARTMATCHPICK MODEL STACK
+LAYER 1
+API-Football ingestion
+
+LAYER 2
+Data validation
+
+LAYER 3
+Temporal snapshotting
+
+LAYER 4
+Historical feature store
+
+LAYER 5
+Team latent state
+
+LAYER 6
+Player latent state
+
+LAYER 7
+Goalkeeper state
+
+LAYER 8
+Lineup state
+
+LAYER 9
+League/regime state
+
+LAYER 10
+Market state
+
+LAYER 11
+Expected-goal posterior
+
+LAYER 12
+Score-dependence model
+
+LAYER 13
+Joint score matrix
+
+LAYER 14
+Market derivation
+
+LAYER 15
+Ensemble/residual correction
+
+LAYER 16
+Calibration
+
+LAYER 17
+Uncertainty
+
+LAYER 18
+Market-value engine
+
+LAYER 19
+Data-quality gate
+
+LAYER 20
+Publication
+
+LAYER 21
+Settlement
+
+LAYER 22
+Backtesting
+
+LAYER 23
+Drift / retraining
+403. SOURCE NOTES FOR THE ADVANCED METHODS
+
+The API-specific portions of this architecture are based on the current API-Football documentation and official 2026 guidance, including its coverage model, fixture aggregation, statistics, events, lineups, predictions, odds and quota/freshness guidance. [1][2][3][4][5]
+
+The statistical architecture draws on established football-score modeling literature, including dynamic attack/defence models, Dixon-Coles low-score correction, bivariate Poisson and negative-binomial extensions. [8][9]
+
+The key methodological principle is:
+
+use API-Football for observations;
+use statistical modeling for interpretation;
+use calibration for probability reliability;
+use the market only as an evidence/value reference;
+use backtesting to decide which components actually add predictive value.
+404. IMPLEMENTATION ACCEPTANCE CRITERIA — ADVANCED
+
+The upgraded engine passes only when all of the following are true:
+
+[ ] Every input has source + timestamp
+[ ] Every prediction has feature cutoff
+[ ] Future-data leakage automatically rejected
+[ ] Team strengths are dynamically estimated
+[ ] Home/away effects are modeled
+[ ] Opponent adjustment is modeled
+[ ] Recent form is multi-timescale
+[ ] Small samples are shrunk
+[ ] Player impact is replacement-based
+[ ] Injuries are player-weighted
+[ ] Goalkeeper is separately modeled
+[ ] Lineups alter expected-goal state
+[ ] Goal timing is represented
+[ ] Goal distribution supports over lines
+[ ] Score distribution supports correct score
+[ ] BTTS is derived coherently
+[ ] 1X2 is derived coherently
+[ ] O/U is derived coherently
+[ ] Correct Score is derived coherently
+[ ] Overdispersion is tested
+[ ] Dependence is tested
+[ ] Dixon-Coles is validated
+[ ] Ensemble weights are out-of-sample
+[ ] External API prediction is benchmarked
+[ ] Market consensus is vig-adjusted
+[ ] Odds snapshots are stored
+[ ] Calibration is measured
+[ ] Uncertainty is measured
+[ ] Model stability is measured
+[ ] Feature ablation is measured
+[ ] Endpoint information value is measured
+[ ] No-fallback policy exists
+[ ] Quality gates exist
+[ ] Prediction versions are immutable
+[ ] Selection odds are frozen
+[ ] Settlement is automatic
+[ ] Walk-forward backtesting exists
+[ ] Drift monitoring exists
+405. DEFINITIVE DESIGN PRINCIPLE
+
+Do not make the engine:
+
+a collection of statistics
+
+Make it:
+
+a probabilistic state-estimation system
+
+using API-Football as the observation layer.
+
+The end product should be:
+
+OBSERVATIONS
+    ↓
+ESTIMATED TEAM STATES
+    ↓
+EXPECTED GOALS
+    ↓
+JOINT SCORE DISTRIBUTION
+    ↓
+CALIBRATED MARKET PROBABILITIES
+    ↓
+VALUE / SELECTION
+
+That is the core methodology to implement across SmartMatchPick's BTTS, Over/Under, 1X2 and Correct Score engines.
+
+406. REFERENCES ADDED FOR THE ADVANCED METHODOLOGY
+
+[8] Oxford Academic. Extending the Dixon and Coles model: an application to women’s football data. Journal of the Royal Statistical Society Series C: Applied Statistics, 2025. https://academic.oup.com/jrsssc/article/74/1/167/7818323
+
+[9] Oxford Academic. Dynamic Modelling and Prediction of English Football League Matches for Betting. The Statistician, 2002. https://academic.oup.com/jrsssd/article/51/2/157/7120674
+
+[10] Oxford Academic. Bayesian state-space models for the modelling and prediction of the results of English Premier League football. Journal of the Royal Statistical Society Series C: Applied Statistics, 2025. https://academic.oup.com/jrsssc/article/74/3/717/7929974
+"""
+
+Avoid duplicate "References" conflict by simply append.
+
