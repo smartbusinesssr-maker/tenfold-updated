@@ -65,9 +65,13 @@ export function FoldCard({
             <span className="text-lg tabular-nums">{odds(pick.odd)}</span>
             <span className="text-sm text-muted-foreground">{pick.bookmaker}</span>
             <span className="ml-auto text-sm text-muted-foreground">{familyLabel(pick.kind)}</span>
-            {pick.settled ? (
+            {pick.settled?.live || (pick.settled && pick.settled.hit == null) ? (
+              <Badge variant="outline">
+                Live {pick.settled.home}–{pick.settled.away}
+              </Badge>
+            ) : pick.settled ? (
               <Badge variant={pick.settled.hit ? "win" : "miss"}>
-                {pick.settled.hit ? "HIT" : "MISS"}
+                {pick.settled.hit ? "Hit" : "Miss"}
                 {pick.notes?.includes("over-focus") ? "" : ` ${pick.settled.home}–${pick.settled.away}`}
               </Badge>
             ) : null}

@@ -1,4 +1,4 @@
-import { CalendarIcon, Download, KeyRound, RefreshCw } from "lucide-react";
+import { Activity, CalendarIcon, Download, KeyRound, RefreshCw } from "lucide-react";
 import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { AccuracyPanel } from "@/components/desk/accuracy-panel";
@@ -28,7 +28,7 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDeskStore } from "@/lib/desk-store";
-import { getScanProgressFn, runDeskFn } from "@/lib/football/actions";
+import { getScanProgressFn, refreshResultsFn, runDeskFn } from "@/lib/football/actions";
 import { loadDate, loadSessionKey, loadTz, loadBankroll, loadKellyFraction, saveDate, saveSessionKey, saveTz, saveBankroll, saveKellyFraction } from "@/lib/football/storage";
 import { DEFAULT_BANKROLL, DEFAULT_KELLY_FRACTION, type KellyFraction } from "@/lib/football/kelly";
 import { formatLongDate, TIMEZONES, todayYmd, ymdBounds, ymdToLocalDate } from "@/lib/football/time";
@@ -40,6 +40,7 @@ export function DeskApp({ embed = false }: { embed?: boolean }) {
   const [sessionKey, setSessionKey] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const [running, setRunning] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const [result, setResult] = useState<DeskResult | null>(null);
   const [progress, setProgress] = useState<ScanProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -147,6 +148,48 @@ export function DeskApp({ embed = false }: { embed?: boolean }) {
         setRunning(false);
         stopPoll();
       }
+    }
+  }
+
+  async function updateResults() {
+    if (!result) return;
+    const scanId = `r-${Date.now()}`;
+    scanIdRef.current = scanId;
+    setUpdating(true);
+    setError(null);
+    setProgress({
+      scanId,
+      percent: 20,
+      step: "Checking live scores…",
+      running: true,
+      error: null,
+    });
+    try {
+      const data = await refreshResultsFn({
+        data: {
+          date,
+          timezone,
+          scanId,
+          apiKey: (() => {
+            const k = loadSessionKey();
+            return k.length > 8 ? k : undefined;
+          })(),
+        },
+      });
+      if (scanIdRef.current !== scanId) return;
+      setResult(data);
+      setFold(data.fold);
+      const hits = data.meta?.backtestHits ?? 0;
+      const n = data.meta?.backtestN ?? 0;
+      setProgress({ scanId, percent: 100, step: "Scores updated", running: false, error: null });
+      toast.success(n ? `${hits} hit, ${n - hits} missed, of ${n} finished.` : "No finished scores yet.");
+    } catch (err) {
+      if (scanIdRef.current !== scanId) return;
+      const msg = err instanceof Error ? err.message : "Could not update scores.";
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      if (scanIdRef.current === scanId) setUpdating(false);
     }
   }
 
@@ -280,26 +323,34 @@ export function DeskApp({ embed = false }: { embed?: boolean }) {
               ))}
             </select>
           </div>
-          <Button onClick={() => void runScan(false)} disabled={running}>
+          <Button onClick={() => void runScan(false)} disabled={running || updating}>
             {running ? "Running" : "Run desk"}
           </Button>
-          <Button variant="outline" onClick={() => void runScan(true)} disabled={running}>
+          <Button variant="outline" onClick={() => void runScan(true)} disabled={running || updating}>
             <RefreshCw className={running ? "animate-spin" : undefined} />
             Rescan
           </Button>
-          <Button variant="secondary" onClick={onSave} disabled={!result}>
+          <Button variant="outline" onClick={() => void updateResults()} disabled={running || updating || !result}>
+            <Activity className={updating ? "animate-pulse" : undefined} />
+            {updating ? "Updating" : "Update results"}
+          </Button>
+          <Button variant="secondary" onClick={onSave} disabled={!result || running || updating}>
             <Download />
             Save CSV
           </Button>
         </div>
 
-        {result?.meta?.saved ? (
+        {result?.meta?.resultsUpdatedAt ? (
+          <p className="text-sm text-muted-foreground">
+            Scores checked {new Date(result.meta.resultsUpdatedAt).toLocaleString()}. Finished lines are marked hit or miss and kept for calibration. This used one fixtures call, not a full rescan.
+          </p>
+        ) : result?.meta?.saved ? (
           <p className="text-sm text-muted-foreground">
             This date is already saved{result.meta.scannedAt ? ` (${new Date(result.meta.scannedAt).toLocaleString()})` : ""}. Opening it again does not call API-Football. Rescan replaces it.
           </p>
         ) : null}
 
-        {running ? (
+        {(running || updating) ? (
           <Card>
             <p className="text-base">{progress?.step ?? "Pulling API-Football lines"}</p>
             <p className="mt-1 text-sm tabular-nums text-muted-foreground">{progress?.percent ?? 4}%</p>

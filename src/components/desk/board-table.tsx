@@ -4,6 +4,12 @@ import { edgePp, kindLabel, modelLabel, odds, pct } from "@/components/desk/form
 import { formatKickoff } from "@/lib/football/time";
 import type { ScoredPick } from "@/lib/football/types";
 
+function resultText(p: ScoredPick): string {
+  if (!p.settled) return "—";
+  if (p.settled.live || p.settled.hit == null) return `Live ${p.settled.home}–${p.settled.away}`;
+  return p.settled.hit ? `Hit ${p.settled.home}–${p.settled.away}` : `Miss ${p.settled.home}–${p.settled.away}`;
+}
+
 export function BoardTable({
   rows,
   selected,
@@ -35,6 +41,7 @@ export function BoardTable({
               <th className="py-2 font-medium">Acc.</th>
               <th className="py-2 font-medium">Model</th>
               <th className="py-2 font-medium">Edge</th>
+              <th className="py-2 font-medium">Result</th>
               <th className="py-2 font-medium">CS</th>
             </tr>
           </thead>
@@ -67,6 +74,7 @@ export function BoardTable({
                 <td className="py-2 tabular-nums">{pct(p.accuracy)}</td>
                 <td className="py-2 text-muted-foreground">{modelLabel(p.bestModel)}</td>
                 <td className="py-2 tabular-nums">{edgePp(p.edge)}</td>
+                <td className="py-2 tabular-nums">{resultText(p)}</td>
                 <td className="py-2 tabular-nums">
                   {p.kind === "cs" ? `${p.scoreline} ${pct(p.scorelineP)}` : p.scoreline}
                 </td>
@@ -96,6 +104,7 @@ export function BoardTable({
                 </p>
                 <p className="mt-2 text-sm tabular-nums">
                   {kindLabel(p.kind)} · {odds(p.odd)} · {pct(p.accuracy)} · {edgePp(p.edge)}
+                  {resultText(p) ? ` · ${resultText(p)}` : ""}
                 </p>
               </div>
             </div>

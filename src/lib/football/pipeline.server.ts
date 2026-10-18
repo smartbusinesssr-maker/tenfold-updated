@@ -187,6 +187,7 @@ import { FAMILIES, applyPlatt, makeReport, observationFromPick, walkForwardValid
 import { applyShrink } from "./autoresearch";
 import { bundleCalibration, ingestObservations, loadObservations } from "./calibrate-store.server";
 import { readDayBoard, writeDayBoard } from "./board-store.server";
+import { applyScoreUpdates } from "./results.ts";
 import { emptyLineup, familyOf, inCsOddsBand, inOddsBand, playableOdd, ENGINE_VERSION, FEATURE_SCHEMA, ODDS_PLAYABLE } from "./types";
 import { emaSpanRate, smaRate } from "./latent";
 
@@ -247,6 +248,97 @@ export async function runDeskPipeline(opts) {
 		return result;
 	} finally {
 		inflight.delete(key);
+	}
+}
+function finishedStatus(short) {
+	const st = String(short ?? "").toUpperCase();
+	return st === "FT" || st === "AET" || st === "PEN";
+}
+function upcomingStatus(short) {
+	const st = String(short ?? "").toUpperCase();
+	return st === "NS" || st === "TBD" || st === "PST" || st === "" || st === "CANC" || st === "ABD" || st === "AWD" || st === "WO";
+}
+function loadBoard(date, timezone) {
+	const key = `${date}|${timezone}`;
+	const hit = scanCache.get(key);
+	if (hit?.result) return { key, result: hit.result };
+	const disk = readDayBoard(date, timezone);
+	if (disk) return { key, result: disk };
+	return { key, result: null };
+}
+/** One fixtures call. Grades the saved board. Does not refetch odds or models. */
+export async function refreshPickResults(opts) {
+	const { key, result: saved } = loadBoard(opts.date, opts.timezone);
+	if (!saved) throw new Error("No saved board for this date. Run the desk once, then update results.");
+	const apiKey = envOrSessionKey(opts.apiKey);
+	if (!apiKey) throw new Error("Set an API-Football key to update live scores.");
+	const scanId = opts.scanId ?? `r-${Date.now()}`;
+	beginProgress(scanId);
+	resetScanQuotaCounter();
+	try {
+		setProgress(scanId, 30, "Checking live scores…");
+		const fxRes = await footballGet("/fixtures", {
+			date: opts.date,
+			timezone: opts.timezone
+		}, {
+			apiKey,
+			ttl: 60 * 1000,
+			skipCache: true,
+			deadline: Date.now() + 20_000,
+			gen: currentGeneration()
+		});
+		const scores = new Map();
+		for (const row of fxRes.response ?? []) {
+			const id = row?.fixture?.id;
+			const hg = row?.goals?.home;
+			const ag = row?.goals?.away;
+			if (!id || hg == null || ag == null) continue;
+			const short = row?.fixture?.status?.short;
+			if (upcomingStatus(short)) continue;
+			scores.set(id, {
+				home: hg,
+				away: ag,
+				live: !finishedStatus(short)
+			});
+		}
+		const result = structuredClone(saved);
+		for (const list of [result.candidates, result.scorelines, result.combos, result.bestBetAlternates]) {
+			if (list?.length) applyScoreUpdates(list, scores);
+		}
+		const foldTally = applyScoreUpdates(result.fold ?? [], scores);
+		if (result.bestBet) {
+			const live = (result.candidates ?? []).find((c) => c.id === result.bestBet.id);
+			if (live?.settled) result.bestBet.settled = live.settled;
+			else applyScoreUpdates([result.bestBet], scores);
+		}
+		const ingested = ingestObservations((result.candidates ?? []).map((p) => observationFromPick(opts.date, p)).filter((o) => o != null)).ingested;
+		const { applied, wfo } = bundleCalibration(opts.date);
+		const corpus = loadObservations();
+		const wf = walkForwardValidate(corpus, { asOf: opts.date, hyper: applied.hyper });
+		result.calibration = makeReport(applied, result.fold ?? [], corpus.length, ingested, wf, corpus, wfo);
+		result.modelLeaderboard = leaderboard(result.candidates ?? []);
+		const when = new Date().toISOString();
+		const note = `Live scores: ${foldTally.hits}/${foldTally.n} of the ten finished${foldTally.live ? `, ${foldTally.live} still in play` : ""}. One fixtures call.`;
+		const notes = Array.isArray(result.meta?.notes) ? result.meta.notes.filter((n) => !String(n).startsWith("Live scores:")) : [];
+		notes.unshift(note);
+		if (ingested) notes.splice(1, 0, `Calibrated corpus +${ingested} finished lines.`);
+		result.meta = {
+			...result.meta,
+			saved: true,
+			calls: getQuota().usedThisScan,
+			backtestHits: foldTally.hits,
+			backtestN: foldTally.n,
+			resultsUpdatedAt: when,
+			notes
+		};
+		writeDayBoard(result);
+		scanCache.set(key, { at: Date.now(), result });
+		endProgress(scanId, "Scores updated");
+		return result;
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		failProgress(scanId, msg);
+		throw err;
 	}
 }
 async function runFresh(opts) {

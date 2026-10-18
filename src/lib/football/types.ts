@@ -492,7 +492,7 @@ export interface ScoredPick {
   notes: string[];
   facts: MatchFacts;
   rank?: number;
-  settled?: { home: number; away: number; hit: boolean | null } | null;
+  settled?: { home: number; away: number; hit: boolean | null; live?: boolean } | null;
   aavs?: number;
   robustness?: number;
   comboLegs?: ComboLeg[];
@@ -778,6 +778,8 @@ export interface DeskMeta {
   notes: string[];
   /** True when this response was read from the saved day board and made no API calls. */
   saved?: boolean;
+  /** When live scores were last written onto this saved board. */
+  resultsUpdatedAt?: string;
   backtestHits?: number;
   backtestN?: number;
   calibratedN?: number;

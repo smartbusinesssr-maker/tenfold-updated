@@ -25,6 +25,13 @@ export const runDeskFn = createServerFn({ method: "POST" })
     return runDeskPipeline(data);
   });
 
+export const refreshResultsFn = createServerFn({ method: "POST" })
+  .validator(scanInput)
+  .handler(async ({ data }) => {
+    const { refreshPickResults } = await import("./pipeline.server");
+    return refreshPickResults(data);
+  });
+
 export const getScanProgressFn = createServerFn({ method: "GET" })
   .validator(progressInput)
   .handler(async ({ data }) => {
